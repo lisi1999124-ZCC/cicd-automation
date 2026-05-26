@@ -1,0 +1,17 @@
+# =============================================================================
+# GitHub Actions - Staging Environment Configuration
+# =============================================================================
+
+name: Staging
+
+# Staging environment - auto-deploy from main branch
+on:
+  deployment_target:
+    environment: 'staging'
+
+# Auto-deployment allowed
+# No manual approval required for staging
+
+deployment_branch_policy:
+  # Allow any branch to deploy to staging for testing
+  enabled: true
