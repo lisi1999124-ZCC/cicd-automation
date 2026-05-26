@@ -1,136 +1,135 @@
-# CI/CD Pipeline Architecture
+# CI/CD 流水线架构
 
-## Overview
-This document describes the automated CI/CD pipeline architecture for production deployments.
+## 概述
+本文档描述面向生产部署的自动化 CI/CD 流水线架构。
 
-## Pipeline Stages
+## 流水线阶段
 
 ```
 ┌─────────────────────────────────────────────────────────────────────────────────┐
-│                           CI/CD Pipeline Flow                                    │
+│                           CI/CD 流水线流程                                       │
 └─────────────────────────────────────────────────────────────────────────────────┘
 
-  [Developer] 
+  [开发者] 
       │
       ▼
 ┌─────────────────┐
-│  Code Commit    │  ← Git Push / Pull Request
-│  (Source Stage) │
+│  代码提交       │  ← Git Push / Pull Request
+│  (源码阶段)     │
 └────────┬────────┘
          │
          ▼
 ┌─────────────────┐
-│  Security Scan  │  ← Trivy / SAST / Dependency Check
-│  (Pre-Build)    │
+│  安全扫描       │  ← Trivy / SAST / 依赖检查
+│  (构建前)       │
 └────────┬────────┘
          │
          ▼
 ┌─────────────────┐
-│  Build & Test   │  ← Docker Build / Unit Tests / Integration Tests
-│  (Build Stage)  │
+│  构建与测试     │  ← Docker 构建 / 单元测试 / 集成测试
+│  (构建阶段)     │
 └────────┬────────┘
          │
          ▼
 ┌─────────────────┐
-│  Image Push      │  ← Docker Registry / Artifact Storage
-│  (Push Stage)   │
+│  镜像推送        │  ← Docker 仓库 / 制品存储
+│  (推送阶段)     │
 └────────┬────────┘
          │
          ▼
 ┌─────────────────┐
-│  Deploy Staging │  ← Blue-Green / Canary Deployment
-│  (Staging)      │
+│  部署预发布     │  ← 蓝绿部署 / 金丝雀部署
+│  (预发布环境)   │
 └────────┬────────┘
          │
          ▼
 ┌─────────────────┐
-│  Smoke Tests    │  ← Health Checks / Integration Tests
-│  (Validation)   │
+│  冒烟测试       │  ← 健康检查 / 集成测试
+│  (验证阶段)     │
 └────────┬────────┘
          │
          ▼
 ┌─────────────────┐
-│  Deploy Prod    │  ← Rolling Update / Blue-Green Switch
-│  (Production)   │
+│  部署生产       │  ← 滚动更新 / 蓝绿切换
+│  (生产环境)     │
 └────────┬────────┘
          │
          ▼
 ┌─────────────────┐
-│  Monitor & Alert│  ← Prometheus / Grafana / PagerDuty
-│  (Observability)│
+│  监控与告警     │  ← Prometheus / Grafana / PagerDuty
+│  (可观测性)    │
 └─────────────────┘
 ```
 
-## Environment Strategy
+## 环境策略
 
-| Environment | Purpose | Deployment | Auto-Scale |
-|-------------|---------|------------|------------|
-| Development | Feature testing | On-demand | No |
-| Staging | Pre-production validation | Automatic | No |
-| Production | Live traffic | Manual approval | Yes |
+| 环境 | 用途 | 部署方式 | 自动扩缩容 |
+|------|------|----------|------------|
+| 开发环境 | 功能测试 | 按需部署 | 否 |
+| 预发布环境 | 上线前验证 | 自动部署 | 否 |
+| 生产环境 | 线上流量 | 手动审批 | 是 |
 
-## Deployment Strategy
+## 部署策略
 
-### Blue-Green Deployment
+### 蓝绿部署
 ```
 ┌─────────────────┐      ┌─────────────────┐
-│  Green (Live)   │◄────►│  Blue (Standby) │
-│  100% Traffic   │      │  0% Traffic     │
+│  绿色 (线上)    │◄────►│  蓝色 (待命)    │
+│  100% 流量      │      │  0% 流量         │
 └────────┬────────┘      └────────┬────────┘
          │                        │
          └────────┬───────────────┘
                   ▼
          ┌─────────────────┐
-         │  Load Balancer  │
+         │   负载均衡器    │
          └────────┬────────┘
                   │
          ┌────────┴────────┐
          │                 │
-    Switch to Blue    Health Check
-    after validation  before switch
+    验证后切换到蓝色   切换前健康检查
 ```
 
-### Canary Deployment
+### 金丝雀部署
 ```
 ┌────────────────────────────────────────┐
-│         Load Balancer                  │
+│         负载均衡器                     │
 │  ┌──────────────────────────────────┐  │
-│  │  5% → Canary    │  95% → Stable │  │
+│  │  5% → 金丝雀    │  95% → 稳定版 │  │
 │  └──────────────────────────────────┘  │
 └────────────────────────────────────────┘
          │                    │
          ▼                    ▼
 ┌─────────────────┐   ┌─────────────────┐
-│  Canary (5%)    │   │  Stable (95%)   │
-│  New Version    │   │  Current Ver    │
+│  金丝雀 (5%)    │   │  稳定版 (95%)   │
+│  新版本         │   │  当前版本       │
 └─────────────────┘   └─────────────────┘
 ```
 
-## Quality Gates
+## 质量关卡
 
-| Stage | Gate | Criteria |
-|-------|------|----------|
-| Security Scan | Trivy | 0 Critical vulnerabilities |
-| Unit Tests | Jest/Mocha | ≥80% coverage |
-| Integration | Postman/Newman | All tests pass |
-| Deploy Staging | Health Check | HTTP 200 |
-| Deploy Prod | Manual Approval | Required |
+| 阶段 | 检查项 | 标准 |
+|------|--------|------|
+| 安全扫描 | Trivy | 0 个严重漏洞 |
+| 单元测试 | Jest/Mocha | 覆盖率 ≥ 80% |
+| 集成测试 | Postman/Newman | 全部通过 |
+| 预发布部署 | 健康检查 | HTTP 200 |
+| 生产部署 | 手动审批 | 必须审批 |
 
-## Rollback Strategy
+## 回滚策略
 
-1. **Automatic Rollback**: Triggered on health check failure
-2. **Manual Rollback**: Via GitHub Actions workflow dispatch
-3. **One-Click Rollback**: `kubectl rollout undo deployment/app`
+1. **自动回滚**：健康检查失败时自动触发
+2. **手动回滚**：通过 GitHub Actions 手动调度
+3. **一键回滚**：`kubectl rollout undo deployment/app`
 
-## Notification Channels
+## 通知渠道
 
-- ✅ Success: Slack #deployments
-- ⚠️ Warning: Slack #deployments-alerts
-- 🚨 Failure: PagerDuty (on-call)
+- ✅ 成功：Slack #deployments
+- ⚠️ 警告：Slack #deployments-alerts
+- 🚨 失败：PagerDuty（值班通知）
 
-## Metrics Tracked
+## 跟踪指标
 
-- Deployment Frequency (per day)
-- Lead Time for Changes (commit to production)
-- Change Failure Rate (%)
-- Mean Time to Recovery (MTTR)
+- 部署频率（每日）
+- 变更前置时间（提交到上线）
+- 变更失败率（%）
+- 平均恢复时间（MTTR）
