@@ -1,0 +1,531 @@
+name: CI/CD Pipeline
+
+on:
+  push:
+    branches: [main, develop, release/*]
+  pull_request:
+    branches: [main, develop]
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: 'Target environment'
+        required: true
+        default: 'staging'
+        type: choice
+        options:
+          - staging
+          - production
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_NAME: ${{ github.repository }}
+  NODE_VERSION: '20'
+
+permissions:
+  contents: read
+  packages: write
+  id-token: write
+  security-events: write
+  checks: write
+  deployments: write
+  statuses: write
+
+jobs:
+  # ─────────────────────────────────────────────────────────────────────────────
+  # Stage 1: Security Scanning (runs in parallel with build preparation)
+  # ─────────────────────────────────────────────────────────────────────────────
+  security-scan:
+    name: Security Vulnerability Scan
+    runs-on: ubuntu-latest
+    outputs:
+      trivy_exit_code: ${{ steps.trivy.outputs.exit_code }}
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Run Trivy vulnerability scanner
+        id: trivy
+        uses: aquasecurity/trivy-action@master
+        continue-on-error: true
+        with:
+          scan-type: 'fs'
+          scan-ref: '.'
+          format: 'sarif'
+          output: 'trivy-results.sarif'
+          severity: 'CRITICAL,HIGH'
+          exit-code: ${{ steps.trivy.outputs.exit_code }}
+
+      - name: Upload Trivy scan results to GitHub Security
+        uses: github/codeql-action/upload-sarif@v2
+        if: always()
+        with:
+          sarif_file: 'trivy-results.sarif'
+
+      - name: Check for critical vulnerabilities
+        run: |
+          if grep -q '"Critical": [1-9]' trivy-results.json 2>/dev/null || \
+             grep -q '"Critical": [1-9][0-9]' trivy-results.json 2>/dev/null; then
+            echo "❌ Critical vulnerabilities found - blocking deployment"
+            exit 1
+          fi
+          echo "✅ No critical vulnerabilities found"
+
+      - name: Generate Trivy summary
+        if: always()
+        run: |
+          cat trivy-results.json 2>/dev/null || echo '{"Results": []}' > trivy-results.json
+
+  # ─────────────────────────────────────────────────────────────────────────────
+  # Stage 2: Dependency Audit
+  # ─────────────────────────────────────────────────────────────────────────────
+  dependency-check:
+    name: Dependency Security Audit
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Audit dependencies
+        run: npm audit --audit-level=moderate
+        continue-on-error: true
+
+      - name: Check for high/critical vulnerabilities
+        run: |
+          AUDIT_RESULT=$(npm audit --json 2>/dev/null | jq -r '.metadata.vulnerabilities')
+          HIGH=$(echo "$AUDIT_RESULT" | jq -r '.high // 0')
+          CRITICAL=$(echo "$AUDIT_RESULT" | jq -r '.critical // 0')
+          if [ "$HIGH" -gt 0 ] || [ "$CRITICAL" -gt 0 ]; then
+            echo "Found $HIGH high and $CRITICAL critical vulnerabilities"
+            exit 1
+          fi
+
+      - name: Check for outdated packages
+        run: npm outdated --depth=0 || true
+
+  # ─────────────────────────────────────────────────────────────────────────────
+  # Stage 3: Code Quality & Linting
+  # ─────────────────────────────────────────────────────────────────────────────
+  code-quality:
+    name: Code Quality Check
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run linter
+        run: npm run lint || npm run lint:fix
+
+      - name: Check code formatting
+        run: npm run format:check || true
+
+      - name: Run ESLint
+        run: npm run lint:eslint || true
+
+  # ─────────────────────────────────────────────────────────────────────────────
+  # Stage 4: Unit Tests
+  # ─────────────────────────────────────────────────────────────────────────────
+  unit-tests:
+    name: Unit Tests
+    runs-on: ubuntu-latest
+    needs: [code-quality]
+    services:
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run unit tests
+        run: npm run test:unit -- --coverage --coverageReporters=lcov --coverageReporters=text-summary
+        env:
+          NODE_ENV: test
+          REDIS_URL: redis://localhost:6379
+
+      - name: Upload coverage to Codecov
+        uses: codecov/codecov-action@v4
+        with:
+          token: ${{ secrets.CODECOV_TOKEN }}
+          files: ./coverage/lcov.info
+          flags: unittests
+          name: codecov-umbrella
+          fail_ci_if_error: true
+
+      - name: Check coverage threshold
+        run: |
+          COVERAGE=$(cat coverage/coverage-summary.json | jq -r '.total.lines.pct')
+          if (( $(echo "$COVERAGE < 80" | bc -l) )); then
+            echo "Coverage $COVERAGE% is below threshold of 80%"
+            exit 1
+          fi
+          echo "Coverage: $COVERAGE%"
+
+  # ─────────────────────────────────────────────────────────────────────────────
+  # Stage 5: Integration Tests
+  # ─────────────────────────────────────────────────────────────────────────────
+  integration-tests:
+    name: Integration Tests
+    runs-on: ubuntu-latest
+    needs: [unit-tests]
+    services:
+      postgres:
+        image: postgres:15-alpine
+        env:
+          POSTGRES_USER: test_user
+          POSTGRES_PASSWORD: test_password
+          POSTGRES_DB: test_db
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run integration tests
+        run: npm run test:integration
+        env:
+          NODE_ENV: test
+          DATABASE_URL: postgres://test_user:test_password@localhost:5432/test_db
+          REDIS_URL: redis://localhost:6379
+          JWT_SECRET: test-secret-key-for-integration
+
+      - name: Upload integration test results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: integration-test-results
+          path: test-results/
+          retention-days: 7
+
+  # ─────────────────────────────────────────────────────────────────────────────
+  # Stage 6: Build Docker Image
+  # ─────────────────────────────────────────────────────────────────────────────
+  build:
+    name: Build Docker Image
+    runs-on: ubuntu-latest
+    needs: [security-scan, dependency-check, integration-tests]
+    outputs:
+      image_tag: ${{ steps.meta.outputs.tags }}
+      image_digest: ${{ steps.build.outputs.digest }}
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Extract metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+          tags: |
+            type=ref,event=branch
+            type=sha,prefix={{branch}}-
+            type=raw,value=latest,enable={{is_default_branch}}
+            type=raw,value={{date 'YYYYMMDD-HHmmss'}}
+
+      - name: Build Docker image
+        id: build
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          push: false
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+          build-args: |
+            NODE_VERSION=${{ env.NODE_VERSION }}
+            BUILD_VERSION=${{ github.sha }}
+
+      - name: Run Trivy on built image
+        uses: aquasecurity/trivy-action@master
+        with:
+          image-ref: ${{ steps.meta.outputs.tags }}
+          format: 'sarif'
+          output: 'image-trivy-results.sarif'
+          severity: 'CRITICAL,HIGH'
+          exit-code: '1'
+
+      - name: Upload image scan results
+        uses: github/codeql-action/upload-sarif@v2
+        with:
+          sarif_file: 'image-trivy-results.sarif'
+
+      - name: Push Docker image (on main/release)
+        if: github.event_name == 'push' && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/heads/release/'))
+        run: |
+          docker push --all-tags ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+
+      - name: Save image tag
+        id: save_tag
+        run: |
+          echo "tag=$(echo '${{ steps.meta.outputs.tags }}' | tr -d '[:space:]')" >> $GITHUB_OUTPUT
+
+  # ─────────────────────────────────────────────────────────────────────────────
+  # Stage 7: Deploy to Staging
+  # ─────────────────────────────────────────────────────────────────────────────
+  deploy-staging:
+    name: Deploy to Staging
+    runs-on: ubuntu-latest
+    needs: [build]
+    environment:
+      name: staging
+      url: https://staging.example.com
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Download Docker image
+        run: |
+          docker pull ${{ needs.build.outputs.image_tag }}
+
+      - name: Configure kubectl for staging
+        uses: azure/k8s-set-context@v3
+        with:
+          kubeconfig: ${{ secrets.KUBE_CONFIG_STAGING }}
+
+      - name: Deploy to staging
+        run: |
+          kubectl set image deployment/app \
+            app=${{ needs.build.outputs.image_tag }} \
+            -n staging
+
+      - name: Wait for rollout
+        run: |
+          kubectl rollout status deployment/app -n staging --timeout=300s
+
+      - name: Health check
+        run: |
+          for i in {1..10}; do
+            if curl -sf https://staging.example.com/health; then
+              echo "Health check passed"
+              exit 0
+            fi
+            echo "Attempt $i failed, retrying..."
+            sleep 10
+          done
+          echo "Health check failed after 10 attempts"
+          exit 1
+
+      - name: Run smoke tests
+        run: npm run test:smoke -- --env=staging
+        env:
+          SMOKE_TEST_URL: https://staging.example.com
+          SMOKE_TEST_TOKEN: ${{ secrets.SMOKE_TEST_TOKEN }}
+
+      - name: Notify deployment
+        uses: slackapi/slack-github-action@v1
+        with:
+          payload: |
+            {
+              "text": "✅ Successfully deployed to *Staging*\nBranch: `${{ github.ref_name }}`\nCommit: `${{ github.sha }}`\nImage: `${{ needs.build.outputs.image_tag }}`\n<https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}|View workflow>"
+            }
+        env:
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+          SLACK_WEBHOOK_TYPE: INCOMING_WEBHOOK_URL
+
+  # ─────────────────────────────────────────────────────────────────────────────
+  # Stage 8: Deploy to Production (Manual Approval Required)
+  # ─────────────────────────────────────────────────────────────────────────────
+  deploy-production:
+    name: Deploy to Production
+    runs-on: ubuntu-latest
+    needs: [deploy-staging]
+    environment:
+      name: production
+      url: https://example.com
+    if: github.event_name == 'workflow_dispatch' || github.ref == 'refs/heads/release/*'
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Download Docker image
+        run: |
+          docker pull ${{ needs.build.outputs.image_tag }}
+
+      - name: Configure kubectl for production
+        uses: azure/k8s-set-context@v3
+        with:
+          kubeconfig: ${{ secrets.KUBE_CONFIG_PRODUCTION }}
+
+      - name: Blue-Green Deploy
+        run: |
+          # Label the new deployment
+          kubectl patch deployment app-green \
+            -n production \
+            -p "{\"spec\":{\"template\":{\"spec\":{\"containers\":[{\"name\":\"app\",\"image\":\"${{ needs.build.outputs.image_tag }}\"}]}}}}"
+
+          # Wait for green deployment
+          kubectl rollout status deployment/app-green -n production --timeout=300s
+
+          # Run smoke tests on green
+          kubectl run smoke-test-green \
+            --image=${{ needs.build.outputs.image_tag }} \
+            --restart=Never \
+            -n production \
+            --wait
+
+          # Switch traffic to green
+          kubectl patch service app-svc \
+            -n production \
+            -p '{"spec":{"selector":{"version":"green"}}}'
+
+      - name: Health check after switch
+        run: |
+          for i in {1..15}; do
+            if curl -sf https://example.com/health; then
+              echo "Health check passed"
+              exit 0
+            fi
+            echo "Attempt $i failed, retrying..."
+            sleep 5
+          done
+          echo "Health check failed"
+          exit 1
+
+      - name: Switch blue to new version (prepare for next deploy)
+        run: |
+          kubectl patch deployment app-blue \
+            -n production \
+            -p "{\"spec\":{\"template\":{\"spec\":{\"containers\":[{\"name\":\"app\",\"image\":\"${{ needs.build.outputs.image_tag }}\"}]}}}}"
+          kubectl rollout status deployment/app-blue -n production --timeout=300s
+
+      - name: Notify production deployment
+        uses: slackapi/slack-github-action@v1
+        with:
+          payload: |
+            {
+              "text": "🚀 *Production Deployment*\n✅ Successfully deployed to *Production*\nVersion: `${{ needs.build.outputs.image_tag }}`\nDeployed by: `${{ github.actor }}`\n<https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}|View workflow>"
+            }
+        env:
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+          SLACK_WEBHOOK_TYPE: INCOMING_WEBHOOK_URL
+
+  # ─────────────────────────────────────────────────────────────────────────────
+  # Stage 9: Rollback Workflow (Manual Trigger)
+  # ─────────────────────────────────────────────────────────────────────────────
+  rollback:
+    name: Rollback Deployment
+    runs-on: ubuntu-latest
+    environment:
+      name: production
+    if: github.event_name == 'workflow_dispatch' && github.inputs.action == 'rollback'
+    inputs:
+      environment:
+        required: true
+      version:
+        description: 'Image tag to rollback to'
+        required: true
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Configure kubectl
+        uses: azure/k8s-set-context@v3
+        with:
+          kubeconfig: ${{ secrets.KUBE_CONFIG_PRODUCTION }}
+
+      - name: Rollback deployment
+        run: |
+          kubectl rollout undo deployment/app -n ${{ github.inputs.environment }}
+
+      - name: Wait for rollback
+        run: |
+          kubectl rollout status deployment/app -n ${{ github.inputs.environment }} --timeout=300s
+
+      - name: Notify rollback
+        uses: slackapi/slack-github-action@v1
+        with:
+          payload: |
+            {
+              "text": "⚠️ *Rollback Initiated*\nEnvironment: `${{ github.inputs.environment }}`\nRolled back to: `${{ github.inputs.version }}`\nTriggered by: `${{ github.actor }}`"
+            }
+        env:
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+          SLACK_WEBHOOK_TYPE: INCOMING_WEBHOOK_URL
+
+  # ─────────────────────────────────────────────────────────────────────────────
+  # Stage 10: Generate Deployment Report
+  # ─────────────────────────────────────────────────────────────────────────────
+  deploy-report:
+    name: Generate Deployment Report
+    runs-on: ubuntu-latest
+    needs: [deploy-production]
+    if: always() && (needs.deploy-production.result == 'success' || needs.deploy-production.result == 'failure')
+    steps:
+      - name: Generate report
+        run: |
+          echo "# Deployment Report" > deployment-report.md
+          echo "" >> deployment-report.md
+          echo "**Date:** $(date)" >> deployment-report.md
+          echo "**Repository:** ${{ github.repository }}" >> deployment-report.md
+          echo "**Commit:** ${{ github.sha }}" >> deployment-report.md
+          echo "**Actor:** ${{ github.actor }}" >> deployment-report.md
+          echo "**Status:** ${{ needs.deploy-production.result }}" >> deployment-report.md
+
+      - name: Upload report
+        uses: actions/upload-artifact@v4
+        with:
+          name: deployment-report
+          path: deployment-report.md
+          retention-days: 30
