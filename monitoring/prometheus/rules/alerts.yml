@@ -1,0 +1,291 @@
+# =============================================================================
+# Prometheus Alert Rules
+# =============================================================================
+
+groups:
+  # ─────────────────────────────────────────────────────────────────────────
+  # Application Alerts
+  # ─────────────────────────────────────────────────────────────────────────
+  - name: application
+    interval: 30s
+    rules:
+      # High Error Rate
+      - alert: HighErrorRate
+        expr: |
+          (
+            sum(rate(http_requests_total{status=~"5.."}[5m])) by (namespace, service)
+            /
+            sum(rate(http_requests_total[5m])) by (namespace, service)
+          ) > 0.05
+        for: 5m
+        labels:
+          severity: critical
+          team: backend
+        annotations:
+          summary: "High error rate detected"
+          description: "{{ $labels.service }} in {{ $labels.namespace }} has error rate of {{ $value | humanizePercentage }} for the last 5 minutes."
+          runbook_url: "https://wiki.example.com/runbooks/high-error-rate"
+
+      # Service Down
+      - alert: ServiceDown
+        expr: up{job="application"} == 0
+        for: 2m
+        labels:
+          severity: critical
+          team: backend
+        annotations:
+          summary: "Service is down"
+          description: "{{ $labels.job }} ({{ $labels.instance }}) has been down for more than 2 minutes."
+          runbook_url: "https://wiki.example.com/runbooks/service-down"
+
+      # High Latency P99
+      - alert: HighLatency
+        expr: |
+          histogram_quantile(0.99, sum(rate(http_request_duration_seconds_bucket[5m])) by (le, namespace, service)) > 2
+        for: 5m
+        labels:
+          severity: warning
+          team: backend
+        annotations:
+          summary: "High latency detected"
+          description: "{{ $labels.service }} P99 latency is {{ $value | humanizeDuration }}."
+          runbook_url: "https://wiki.example.com/runbooks/high-latency"
+
+      # High Memory Usage
+      - alert: HighMemoryUsage
+        expr: |
+          (
+            container_memory_usage_bytes / container_spec_memory_limit_bytes
+          ) > 0.9
+        for: 10m
+        labels:
+          severity: warning
+          team: backend
+        annotations:
+          summary: "High memory usage"
+          description: "Container {{ $labels.container }} in {{ $labels.namespace }} is using {{ $value | humanizePercentage }} of its memory limit."
+          runbook_url: "https://wiki.example.com/runbooks/high-memory"
+
+      # High CPU Usage
+      - alert: HighCPUUsage
+        expr: |
+          (
+            sum(rate(container_cpu_usage_seconds_total[5m])) by (namespace, container)
+            /
+            sum(container_spec_cpu_quota / container_spec_cpu_period) by (namespace, container)
+          ) > 0.85
+        for: 10m
+        labels:
+          severity: warning
+          team: backend
+        annotations:
+          summary: "High CPU usage"
+          description: "Container {{ $labels.container }} in {{ $labels.namespace }} is using {{ $value | humanizePercentage }} of its CPU limit."
+
+  # ─────────────────────────────────────────────────────────────────────────
+  # Kubernetes Alerts
+  # ─────────────────────────────────────────────────────────────────────────
+  - name: kubernetes
+    interval: 30s
+    rules:
+      # Pod Not Ready
+      - alert: PodNotReady
+        expr: |
+          kube_pod_status_ready{condition="true", namespace=~"production|staging"} == 0
+        for: 5m
+        labels:
+          severity: warning
+          team: platform
+        annotations:
+          summary: "Pod is not ready"
+          description: "Pod {{ $labels.namespace }}/{{ $labels.pod }} has been not ready for more than 5 minutes."
+
+      # Pod Restarting Too Much
+      - alert: PodRestartingTooMuch
+        expr: |
+          increase(kube_pod_container_status_restarts_total[1h]) > 5
+        for: 1m
+        labels:
+          severity: warning
+          team: platform
+        annotations:
+          summary: "Pod restarting too much"
+          description: "Pod {{ $labels.namespace }}/{{ $labels.pod }} has restarted {{ $value }} times in the last hour."
+
+      # Deployment Replicas Mismatch
+      - alert: DeploymentReplicasMismatch
+        expr: |
+          kube_deployment_spec_replicas != kube_deployment_status_replicas_available
+        for: 10m
+        labels:
+          severity: warning
+          team: platform
+        annotations:
+          summary: "Deployment replicas mismatch"
+          description: "Deployment {{ $labels.namespace }}/{{ $labels.deployment }} has {{ $value }} available replicas but {{ $labels.replicas }} desired."
+
+      # HPA at Max
+      - alert: HPAAtMaxReplicas
+        expr: |
+          kube_horizontalpodautoscaler_status_desired_replicas == kube_horizontalpodautoscaler_spec_max_replicas
+        for: 15m
+        labels:
+          severity: warning
+          team: platform
+        annotations:
+          summary: "HPA at maximum replicas"
+          description: "HPA {{ $labels.namespace }}/{{ $labels.horizontalpodautoscaler }} has been at maximum replicas for 15 minutes."
+
+  # ─────────────────────────────────────────────────────────────────────────
+  # Database Alerts
+  # ─────────────────────────────────────────────────────────────────────────
+  - name: database
+    interval: 30s
+    rules:
+      # PostgreSQL Down
+      - alert: PostgreSQLDown
+        expr: pg_up == 0
+        for: 1m
+        labels:
+          severity: critical
+          team: database
+        annotations:
+          summary: "PostgreSQL is down"
+          description: "PostgreSQL instance {{ $labels.instance }} is not responding."
+          runbook_url: "https://wiki.example.com/runbooks/postgresql-down"
+
+      # PostgreSQL Too Many Connections
+      - alert: PostgreSQLTooManyConnections
+        expr: |
+          sum(pg_stat_database_numbackends) by (datname) / current_setting('max_connections')::float > 0.8
+        for: 5m
+        labels:
+          severity: warning
+          team: database
+        annotations:
+          summary: "PostgreSQL connection usage high"
+          description: "Database {{ $labels.datname }} is using {{ $value | humanizePercentage }} of available connections."
+
+      # PostgreSQL Slow Queries
+      - alert: PostgreSQLSlowQueries
+        expr: |
+          sum(rate(pg_stat_statements_mean_exec_time[5m])) by (datname) > 1000
+        for: 5m
+        labels:
+          severity: warning
+          team: database
+        annotations:
+          summary: "PostgreSQL slow queries detected"
+          description: "Average query execution time on {{ $labels.datname }} is {{ $value | humanizeDuration }}."
+
+  # ─────────────────────────────────────────────────────────────────────────
+  # Redis Alerts
+  # ─────────────────────────────────────────────────────────────────────────
+  - name: redis
+    interval: 30s
+    rules:
+      # Redis Down
+      - alert: RedisDown
+        expr: redis_up == 0
+        for: 1m
+        labels:
+          severity: critical
+          team: backend
+        annotations:
+          summary: "Redis is down"
+          description: "Redis instance {{ $labels.instance }} is not responding."
+
+      # Redis High Memory
+      - alert: RedisHighMemory
+        expr: |
+          redis_memory_used_bytes / redis_memory_max_bytes > 0.9
+        for: 5m
+        labels:
+          severity: warning
+          team: backend
+        annotations:
+          summary: "Redis high memory usage"
+          description: "Redis {{ $labels.instance }} is using {{ $value | humanizePercentage }} of max memory."
+
+      # Redis Too Many Connections
+      - alert: RedisTooManyConnections
+        expr: |
+          redis_connected_clients > 1000
+        for: 5m
+        labels:
+          severity: warning
+          team: backend
+        annotations:
+          summary: "Redis too many connections"
+          description: "Redis {{ $labels.instance }} has {{ $value }} connected clients."
+
+  # ─────────────────────────────────────────────────────────────────────────
+  # Infrastructure Alerts
+  # ─────────────────────────────────────────────────────────────────────────
+  - name: infrastructure
+    interval: 60s
+    rules:
+      # Disk Space Low
+      - alert: DiskSpaceLow
+        expr: |
+          (
+            node_filesystem_avail_bytes{mountpoint="/"} / node_filesystem_size_bytes
+          ) < 0.1
+        for: 5m
+        labels:
+          severity: warning
+          team: platform
+        annotations:
+          summary: "Disk space is low"
+          description: "Node {{ $labels.instance }} has only {{ $value | humanizePercentage }} disk space remaining."
+
+      # KubeAPIServer Errors
+      - alert: KubeAPIServerErrors
+        expr: |
+          sum(rate(apiserver_request_total{job="kubernetes-apiservers",code=~"5.."}[5m])) > 0.01
+        for: 5m
+        labels:
+          severity: warning
+          team: platform
+        annotations:
+          summary: "Kubernetes API server error rate is high"
+          description: "API server has error rate of {{ $value }} per second."
+
+  # ─────────────────────────────────────────────────────────────────────────
+  # SLO/SLA Alerts
+  # ─────────────────────────────────────────────────────────────────────────
+  - name: slo
+    interval: 60s
+    rules:
+      # Error Budget Burn Rate (Fast)
+      - alert: ErrorBudgetBurnFast
+        expr: |
+          (
+            sum(rate(http_requests_total{status=~"5.."}[1h]))
+            /
+            sum(rate(http_requests_total[1h]))
+          ) > 0.01
+        for: 5m
+        labels:
+          severity: critical
+          team: backend
+        annotations:
+          summary: "Error budget burning fast"
+          description: "Service is burning error budget at a rate of {{ $value | humanizePercentage }}/hour."
+          runbook_url: "https://wiki.example.com/runbooks/error-budget"
+
+      # Availability SLO At Risk
+      - alert: SLOServiceAtRisk
+        expr: |
+          (
+            sum(rate(http_requests_total{status!~"2.."}[1h])) by (namespace, service)
+            /
+            sum(rate(http_requests_total[1h])) by (namespace, service)
+          ) > 0.001
+        for: 30m
+        labels:
+          severity: warning
+          team: backend
+        annotations:
+          summary: "SLO at risk"
+          description: "Service {{ $labels.service }} is at risk of missing its availability SLO."
