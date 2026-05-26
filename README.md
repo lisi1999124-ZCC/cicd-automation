@@ -1,49 +1,49 @@
-# Application CI/CD Pipeline
+# 应用 CI/CD 流水线
 
-Automated deployment pipeline for production workloads with security scanning, testing, and monitoring.
+面向生产环境的自动化部署流水线，集成安全扫描、测试和监控。
 
-## Overview
+## 概述
 
-This project implements a complete CI/CD pipeline with the following features:
+本项目实现了一套完整的 CI/CD 流水线，具备以下能力：
 
-- **Security First**: Trivy vulnerability scanning, dependency audit, SAST
-- **Comprehensive Testing**: Unit tests, integration tests, smoke tests
-- **Zero-Downtime Deployment**: Blue-green deployment strategy
-- **Full Observability**: Prometheus metrics, Grafana dashboards, alerting
-- **Infrastructure as Code**: Terraform for AWS infrastructure
+- **安全优先**：Trivy 漏洞扫描、依赖审计、SAST 静态分析
+- **全面测试**：单元测试、集成测试、冒烟测试
+- **零停机部署**：蓝绿部署策略
+- **全链路可观测**：Prometheus 指标采集、Grafana 可视化、告警通知
+- **基础设施即代码**：Terraform 管理 AWS 基础设施
 
-## Architecture
+## 架构
 
 ```
 ┌─────────────────────────────────────────────────────────────────┐
-│                        CI/CD Pipeline                           │
+│                        CI/CD 流水线                             │
 ├─────────────────────────────────────────────────────────────────┤
-│  Source → Security → Build → Test → Push → Stage → Approve → Prod
+│  源码 → 安全扫描 → 构建 → 测试 → 推送 → 预发布 → 审批 → 生产环境
 └─────────────────────────────────────────────────────────────────┘
 ```
 
-## Quick Start
+## 快速开始
 
-### 1. Configure Secrets
+### 1. 配置密钥
 
-Set up required GitHub secrets:
+设置所需的 GitHub Secrets：
 
 ```bash
-# Kubernetes configs (base64 encoded)
-KUBE_CONFIG_STAGING=<staging-kubeconfig>
-KUBE_CONFIG_PRODUCTION=<production-kubeconfig>
+# Kubernetes 配置（Base64 编码）
+KUBE_CONFIG_STAGING=<预发布环境-kubeconfig>
+KUBE_CONFIG_PRODUCTION=<生产环境-kubeconfig>
 
-# Cloud credentials
-AWS_ACCESS_KEY_ID=<key>
-AWS_SECRET_ACCESS_KEY=<secret>
+# 云服务凭证
+AWS_ACCESS_KEY_ID=<密钥ID>
+AWS_SECRET_ACCESS_KEY=<访问密钥>
 
-# Notifications
+# 通知渠道
 SLACK_WEBHOOK_URL=https://hooks.slack.com/...
 ```
 
-See [docs/SECRETS-MANAGEMENT.md](docs/SECRETS-MANAGEMENT.md) for full list.
+完整列表见 [docs/SECRETS-MANAGEMENT.md](docs/SECRETS-MANAGEMENT.md)
 
-### 2. Deploy Infrastructure
+### 2. 部署基础设施
 
 ```bash
 cd infrastructure/terraform
@@ -52,128 +52,128 @@ terraform plan -var-file=prod.tfvars
 terraform apply -var-file=prod.tfvars
 ```
 
-### 3. Push Code
+### 3. 推送代码
 
 ```bash
-git checkout -b feature/your-feature
-# Make changes
-git push origin feature/your-feature
-# Create PR
+git checkout -b feature/你的功能分支
+# 修改代码
+git push origin feature/你的功能分支
+# 创建 Pull Request
 ```
 
-Pipeline will automatically:
-- Run security scans
-- Build and push Docker image
-- Deploy to staging
-- Run smoke tests
+流水线将自动：
+- 运行安全扫描
+- 构建并推送 Docker 镜像
+- 部署到预发布环境
+- 执行冒烟测试
 
-### 4. Deploy to Production
+### 4. 部署到生产环境
 
-1. Go to GitHub Actions
-2. Find the workflow run
-3. Click "Review deployments"
-4. Approve production deployment
+1. 进入 GitHub Actions
+2. 找到对应的流水线运行记录
+3. 点击「Review deployments」
+4. 批准生产环境部署
 
-## Directory Structure
+## 目录结构
 
 ```
 .
 ├── .github/
-│   ├── workflows/           # GitHub Actions pipelines
-│   └── environments/        # Environment configurations
-├── k8s/                     # Kubernetes manifests
-│   ├── deployment.yaml      # Application deployment
-│   ├── service.yaml         # Service definitions
-│   ├── ingress.yaml         # Ingress rules
-│   └── configmap-secret.yaml # ConfigMaps & Secrets
+│   ├── workflows/           # GitHub Actions 流水线
+│   └── environments/        # 环境配置
+├── k8s/                     # Kubernetes 部署清单
+│   ├── deployment.yaml      # 应用部署
+│   ├── service.yaml         # 服务定义
+│   ├── ingress.yaml         # 入口规则
+│   └── configmap-secret.yaml # ConfigMap 和 Secret
 ├── monitoring/
-│   └── prometheus/          # Monitoring configuration
-│       ├── prometheus.yml   # Prometheus config
-│       ├── rules/           # Alert rules
-│       └── alertmanager.yml # Alert routing
+│   └── prometheus/          # 监控配置
+│       ├── prometheus.yml   # Prometheus 配置
+│       ├── rules/           # 告警规则
+│       └── alertmanager.yml # 告警路由
 ├── infrastructure/
-│   └── terraform/           # Infrastructure as Code
-├── docker-compose*.yml      # Local development
-├── Dockerfile               # Multi-stage Docker build
+│   └── terraform/           # 基础设施即代码
+├── docker-compose*.yml      # 本地开发
+├── Dockerfile               # 多阶段 Docker 构建
 └── scripts/
-    └── deploy.sh           # Deployment helper script
+    └── deploy.sh           # 部署辅助脚本
 ```
 
-## Deployment Strategies
+## 部署策略
 
-### Blue-Green Deployment
+### 蓝绿部署
 
-Traffic switches between green and blue environments:
+流量在绿色和蓝色环境之间切换：
 
 ```bash
-# Deploy to green
+# 部署到绿色环境
 kubectl set image deployment/app-green app=app:v2.0.0
 
-# Run validation...
+# 运行验证...
 
-# Switch traffic
+# 切换流量
 kubectl patch service app-svc -p '{"spec":{"selector":{"slot":"green"}}}'
 ```
 
-### Canary Deployment
+### 金丝雀部署
 
-Gradually shift traffic:
+逐步灰度切换流量：
 
 ```yaml
-# nginx ingress annotation
+# nginx ingress 注解
 nginx.ingress.kubernetes.io/canary: "true"
-nginx.ingress.kubernetes.io/canary-weight: "5"  # 5% to canary
+nginx.ingress.kubernetes.io/canary-weight: "5"  # 5% 流量到金丝雀
 ```
 
-## Rollback
+## 回滚
 
 ```bash
-# One-command rollback
+# 一键回滚
 kubectl rollout undo deployment/app -n production
 
-# Rollback to specific revision
+# 回滚到指定版本
 kubectl rollout undo deployment/app -n production --to-revision=3
 ```
 
-## Monitoring
+## 监控
 
-| Dashboard | Purpose |
-|-----------|---------|
-| Grafana | Metrics visualization |
-| Prometheus | Metrics collection |
-| Kibana | Log aggregation |
-| Jaeger | Distributed tracing |
+| 面板 | 用途 |
+|------|------|
+| Grafana | 指标可视化 |
+| Prometheus | 指标采集 |
+| Kibana | 日志聚合 |
+| Jaeger | 分布式链路追踪 |
 
-## Troubleshooting
+## 故障排查
 
-### Deployment Stuck
+### 部署卡住
 
 ```bash
-# Check pod status
+# 查看 Pod 状态
 kubectl get pods -n production
 
-# View events
+# 查看事件
 kubectl describe deployment app -n production
 
-# Check pod logs
+# 查看 Pod 日志
 kubectl logs -l app=app -n production --tail=100
 ```
 
-### High Error Rate
+### 错误率高
 
-1. Check Prometheus alerts
-2. View application logs
-3. Verify database connectivity
-4. Check resource limits
+1. 检查 Prometheus 告警
+2. 查看应用日志
+3. 验证数据库连接
+4. 检查资源限制
 
-## Contributing
+## 贡献指南
 
-1. Create feature branch from `develop`
-2. Make changes with tests
-3. Open PR to `develop`
-4. After approval, merge to `main`
-5. Pipeline deploys to production
+1. 从 `develop` 分支创建功能分支
+2. 编写代码并补充测试
+3. 向 `develop` 发起 Pull Request
+4. 审批通过后合并到 `main`
+5. 流水线自动部署到生产环境
 
-## License
+## 许可证
 
 MIT
