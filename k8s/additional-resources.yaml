@@ -1,0 +1,220 @@
+# =============================================================================
+# Kubernetes PodDisruptionBudget - Ensure high availability during updates
+# =============================================================================
+
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: app-pdb
+  namespace: production
+spec:
+  minAvailable: 2
+  selector:
+    matchLabels:
+      app: app
+
+---
+# =============================================================================
+# Kubernetes ResourceQuota - Limit resource consumption
+# =============================================================================
+
+---
+apiVersion: v1
+kind: ResourceQuota
+metadata:
+  name: app-quota
+  namespace: production
+spec:
+  hard:
+    requests.cpu: "4"
+    requests.memory: 8Gi
+    limits.cpu: "8"
+    limits.memory: 16Gi
+    pods: "20"
+    services: "5"
+    persistentvolumeclaims: "5"
+
+---
+# =============================================================================
+# Kubernetes LimitRange - Set default resource limits
+# =============================================================================
+
+---
+apiVersion: v1
+kind: LimitRange
+metadata:
+  name: app-limit-range
+  namespace: production
+spec:
+  limits:
+    - max:
+        cpu: "2"
+        memory: 2Gi
+      min:
+        cpu: 50m
+        memory: 64Mi
+      default:
+        cpu: 200m
+        memory: 256Mi
+      defaultRequest:
+        cpu: 100m
+        memory: 128Mi
+      type: Container
+    - max:
+        cpu: "4"
+        memory: 4Gi
+      min:
+        cpu: 50m
+        memory: 64Mi
+      type: Pod
+
+---
+# =============================================================================
+# Kubernetes ServiceAccount
+# =============================================================================
+
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: app-sa
+  namespace: production
+  labels:
+    app: app
+automountServiceAccountToken: false
+
+---
+# RBAC Role for the application
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: app-role
+  namespace: production
+rules:
+  - apiGroups: [""]
+    resources: ["configmaps", "secrets"]
+    verbs: ["get", "list", "watch"]
+
+---
+# RBAC RoleBinding
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: app-rolebinding
+  namespace: production
+subjects:
+  - kind: ServiceAccount
+    name: app-sa
+    namespace: production
+roleRef:
+  kind: Role
+  name: app-role
+  apiGroup: rbac.authorization.k8s.io
+
+---
+# =============================================================================
+# Kubernetes CronJob for scheduled tasks
+# =============================================================================
+
+---
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: app-db-migration
+  namespace: production
+spec:
+  schedule: "0 2 * * *"  # Run at 2 AM daily
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 1
+  concurrencyPolicy: Forbid
+  jobTemplate:
+    spec:
+      template:
+        metadata:
+          labels:
+            app: app
+            task: db-migration
+        spec:
+          restartPolicy: OnFailure
+          containers:
+            - name: migration
+              image: app:latest
+              command: ["npm", "run", "migrate:production"]
+              envFrom:
+                - configMapRef:
+                    name: app-config
+                - secretRef:
+                    name: app-secrets
+              resources:
+                limits:
+                  cpu: 500m
+                  memory: 512Mi
+
+---
+# CronJob for database backup
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: app-db-backup
+  namespace: production
+spec:
+  schedule: "0 */6 * * *"  # Run every 6 hours
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 1
+  concurrencyPolicy: Forbid
+  jobTemplate:
+    spec:
+      template:
+        metadata:
+          labels:
+            app: app
+            task: db-backup
+        spec:
+          restartPolicy: OnFailure
+          containers:
+            - name: backup
+              image: postgres:15-alpine
+              command:
+                - /bin/sh
+                - -c
+                - |
+                  pg_dump -h $DB_HOST -U $DB_USER -d $DB_NAME -F c -b -v -f /backups/backup-$(date +%Y%m%d-%H%M%S).dump
+              env:
+                - name: DB_HOST
+                  valueFrom:
+                    secretKeyRef:
+                      name: app-secrets
+                      key: DATABASE_URL
+                - name: DB_USER
+                  value: "app_user"
+                - name: DB_NAME
+                  value: "app_db"
+                - name: PGPASSWORD
+                  valueFrom:
+                    secretKeyRef:
+                      name: app-secrets
+                      key: DATABASE_PASSWORD
+              volumeMounts:
+                - name: backup-storage
+                  mountPath: /backups
+          volumes:
+            - name: backup-storage
+              persistentVolumeClaim:
+                claimName: backup-pvc
+          restartPolicy: OnFailure
+
+---
+# PVC for backups
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: backup-pvc
+  namespace: production
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 50Gi
+  storageClassName: standard
