@@ -1,0 +1,35 @@
+# =============================================================================
+# GitHub Actions - Environment Protection Rules
+# =============================================================================
+
+# Production Environment Protection
+name: Production
+
+# Protection rules for production environment
+# Requires manual approval before deployment
+
+# Deployment branches
+# Only these branches can deploy to production
+on:
+  deployment_target:
+    environment: 'production'
+
+# Required reviewers (optional - can be set in GitHub settings)
+# If enabled, at least one of these users must approve
+# reviewers:
+#   - required: 1
+#     teams:
+#       - teamname
+
+# Wait timer (optional - delay deployment by specified minutes)
+# wait_timer: 0
+
+# Deployment branch policy
+# Can be set to: all or selected
+deployment_branch_policy:
+  # Only main and release/* branches can deploy
+  # Uncomment and configure if needed
+  # enabled: true
+  # names:
+  #   - main
+  #   - release/*
