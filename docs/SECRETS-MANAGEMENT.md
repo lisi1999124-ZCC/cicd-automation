@@ -1,102 +1,102 @@
 # =============================================================================
-# Secrets Management - Reference Documentation
+# 密钥管理 - 参考文档
 # =============================================================================
 
-# Required GitHub Secrets to configure in Settings > Secrets and variables > Actions
+# 需要在 Settings > Secrets and variables > Actions 中配置的 GitHub Secrets
 
-## Container Registry
-| Secret Name | Description | Example Value |
-|-------------|-------------|---------------|
-| `GITHUB_TOKEN` | GitHub Packages authentication | (Auto-configured) |
+## 容器镜像仓库
+| 密钥名称 | 说明 | 示例值 |
+|----------|------|--------|
+| `GITHUB_TOKEN` | GitHub Packages 认证 | （自动配置） |
 
-## Cloud Provider (AWS/GCP/Azure)
-| Secret Name | Description | Example Value |
-|-------------|-------------|---------------|
-| `AWS_ACCESS_KEY_ID` | AWS Access Key for deployment | `AKIA...` |
-| `AWS_SECRET_ACCESS_KEY` | AWS Secret Key for deployment | `...` |
-| `AWS_REGION` | Target AWS region | `us-east-1` |
+## 云服务商（AWS/GCP/Azure）
+| 密钥名称 | 说明 | 示例值 |
+|----------|------|--------|
+| `AWS_ACCESS_KEY_ID` | AWS 访问密钥 ID | `AKIA...` |
+| `AWS_SECRET_ACCESS_KEY` | AWS 秘密访问密钥 | `...` |
+| `AWS_REGION` | 目标 AWS 区域 | `us-east-1` |
 
 ## Kubernetes
-| Secret Name | Description | Example Value |
-|-------------|-------------|---------------|
-| `KUBE_CONFIG_STAGING` | Base64-encoded kubeconfig for staging | `LS0t...` |
-| `KUBE_CONFIG_PRODUCTION` | Base64-encoded kubeconfig for production | `LS0t...` |
+| 密钥名称 | 说明 | 示例值 |
+|----------|------|--------|
+| `KUBE_CONFIG_STAGING` | 预发布环境 kubeconfig（Base64 编码） | `LS0t...` |
+| `KUBE_CONFIG_PRODUCTION` | 生产环境 kubeconfig（Base64 编码） | `LS0t...` |
 
-## Database
-| Secret Name | Description | Example Value |
-|-------------|-------------|---------------|
-| `DB_PASSWORD` | PostgreSQL password | `your-secure-password` |
-| `DB_HOST` | Database host | `prod.db.internal:5432` |
+## 数据库
+| 密钥名称 | 说明 | 示例值 |
+|----------|------|--------|
+| `DB_PASSWORD` | PostgreSQL 密码 | `your-secure-password` |
+| `DB_HOST` | 数据库主机地址 | `prod.db.internal:5432` |
 
-## Monitoring & Alerting
-| Secret Name | Description | Example Value |
-|-------------|-------------|---------------|
-| `SLACK_WEBHOOK_URL` | Slack webhook for notifications | `https://hooks.slack.com/...` |
-| `PAGERDUTY_KEY` | PagerDuty integration key | `...` |
-| `GRAFANA_PASSWORD` | Grafana admin password | `secure-password` |
+## 监控与告警
+| 密钥名称 | 说明 | 示例值 |
+|----------|------|--------|
+| `SLACK_WEBHOOK_URL` | Slack 通知 Webhook | `https://hooks.slack.com/...` |
+| `PAGERDUTY_KEY` | PagerDuty 集成密钥 | `...` |
+| `GRAFANA_PASSWORD` | Grafana 管理员密码 | `secure-password` |
 
-## Third-Party Services
-| Secret Name | Description | Example Value |
-|-------------|-------------|---------------|
-| `SENTRY_DSN` | Sentry error tracking | `https://...@sentry.io/...` |
-| `SENDGRID_API_KEY` | Email service API key | `SG...` |
-| `CODECOV_TOKEN` | Codecov upload token | `...` |
+## 第三方服务
+| 密钥名称 | 说明 | 示例值 |
+|----------|------|--------|
+| `SENTRY_DSN` | Sentry 错误追踪 | `https://...@sentry.io/...` |
+| `SENDGRID_API_KEY` | 邮件服务 API 密钥 | `SG...` |
+| `CODECOV_TOKEN` | Codecov 上传令牌 | `...` |
 
-## Testing
-| Secret Name | Description | Example Value |
-|-------------|-------------|---------------|
-| `SMOKE_TEST_TOKEN` | API token for smoke tests | `test-token` |
+## 测试
+| 密钥名称 | 说明 | 示例值 |
+|----------|------|--------|
+| `SMOKE_TEST_TOKEN` | 冒烟测试 API 令牌 | `test-token` |
 
 ---
 
-# How to Create Kubeconfig Secrets
+# 如何创建 Kubeconfig 密钥
 
-## 1. Get kubeconfig from your cluster
+## 1. 从集群获取 kubeconfig
 ```bash
 aws eks update-kubeconfig --name your-cluster-name --region us-east-1
 ```
 
-## 2. Encode the kubeconfig
+## 2. 编码 kubeconfig
 ```bash
 cat ~/.kube/config | base64 | tr -d '\n'
 ```
 
-## 3. Add as GitHub Secret
-Go to Settings > Secrets and variables > Actions > New repository secret
+## 3. 添加为 GitHub Secret
+进入 Settings > Secrets and variables > Actions > New repository secret
 
-Name: `KUBE_CONFIG_STAGING`
-Value: [paste the base64 encoded kubeconfig]
+名称：`KUBE_CONFIG_STAGING`
+值：[粘贴 Base64 编码后的 kubeconfig]
 
 ---
 
-# How to Create AWS Credentials
+# 如何创建 AWS 凭证
 
-## 1. Create an IAM user for CI/CD
+## 1. 为 CI/CD 创建 IAM 用户
 ```bash
 aws iam create-user --user-name github-actions
 ```
 
-## 2. Attach permissions policy
+## 2. 附加权限策略
 ```bash
 aws iam attach-user-policy \
   --user-name github-actions \
   --policy-arn arn:aws:iam::aws:policy/AmazonEKSClusterPolicy
 ```
 
-## 3. Create access key
+## 3. 创建访问密钥
 ```bash
 aws iam create-access-key --user-name github-actions
 ```
 
-## 4. Add credentials to GitHub
-AWS_ACCESS_KEY_ID: [Your Access Key ID]
-AWS_SECRET_ACCESS_KEY: [Your Secret Access Key]
+## 4. 将凭证添加到 GitHub
+AWS_ACCESS_KEY_ID：[你的访问密钥 ID]
+AWS_SECRET_ACCESS_KEY：[你的秘密访问密钥]
 
 ---
 
-# Secret Rotation Policy
+# 密钥轮换策略
 
-- Rotate all secrets quarterly
-- Immediately rotate if a breach is suspected
-- Use AWS Secrets Manager for automatic rotation where possible
-- Review access logs monthly
+- 每季度轮换全部密钥
+- 怀疑泄露时立即轮换
+- 尽可能使用 AWS Secrets Manager 自动轮换
+- 每月审查访问日志
